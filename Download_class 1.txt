@@ -1,0 +1,451 @@
+*&---------------------------------------------------------------------*
+*& Report  ZID_CLASS_DOWNLOAD_XML
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+
+REPORT  zid_class_download_xml.
+
+PARAMETERS: class TYPE seoclskey OBLIGATORY.
+SELECTION-SCREEN SKIP.
+PARAMETERS: p_show AS CHECKBOX.
+
+TYPE-POOLS: seok, seop, srext.
+
+INCLUDE zid_class_xml_const.
+INCLUDE lseopm01.
+
+DATA:
+g_xml TYPE REF TO cl_xml_document,
+gs_class TYPE vseoclass,
+gt_attributes TYPE seoo_attributes_r,
+gt_methods TYPE seoo_methods_r,
+gt_events TYPE seoo_events_r,
+gt_types TYPE seoo_types_r,
+gt_parameters TYPE seos_parameters_r,
+gt_exceps TYPE seos_exceptions_r,
+gt_implementings TYPE seor_implementings_r,
+gs_inheritance TYPE vseoextend,
+gt_redefinitions TYPE seor_redefinitions_r,
+gt_impl_details TYPE seor_redefinitions_r,
+gt_friendships TYPE seof_friendships_r,
+gt_typepusages TYPE seot_typepusages_r,
+gt_clsdeferrds TYPE seot_clsdeferrds_r,
+gt_intdeferrds TYPE seot_intdeferrds_r,
+gt_aliases TYPE seoo_aliases_r,
+gt_interfaces TYPE seok_int_typeinfos,
+gs_includes TYPE seop_methods_w_include,
+gt_source TYPE seop_source_string.
+
+DATA:
+typkey TYPE seocmpkey,
+single_source TYPE seop_source,
+type_source TYPE seop_source_string.
+
+FIELD-SYMBOLS:
+<type> TYPE seoo_type_r,
+<source_line> TYPE LINE OF seop_source.
+
+FIELD-SYMBOLS:
+<include> TYPE LINE OF seop_methods_w_include.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR class.
+
+  DATA:
+  clsname TYPE seoclass-clsname.
+  clsname = class.
+
+  CALL FUNCTION 'F4_OBJECTS_CLASS'
+    EXPORTING
+      object = clsname
+    IMPORTING
+      result = clsname.
+
+  class = clsname.
+
+AT SELECTION-SCREEN ON class.
+
+  DATA:
+  clskey TYPE seoclskey.
+  clskey-clsname = class.
+
+  CALL FUNCTION 'SEO_CLASS_GET'
+    EXPORTING
+      clskey       = clskey
+      version      = '1'
+      state        = '1'
+    EXCEPTIONS
+      not_existing = 1
+      deleted      = 2
+      is_interface = 3
+      model_only   = 4
+      OTHERS       = 5.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+START-OF-SELECTION.
+
+  CALL FUNCTION 'SEO_CLASS_TYPEINFO_GET'
+    EXPORTING
+      clskey        = class
+      version       = seoc_version_active
+    IMPORTING
+      class         = gs_class
+      attributes    = gt_attributes
+      methods       = gt_methods
+      events        = gt_events
+      types         = gt_types
+      parameters    = gt_parameters
+      exceps        = gt_exceps
+      implementings = gt_implementings
+      inheritance   = gs_inheritance
+      redefinitions = gt_redefinitions
+      impl_details  = gt_impl_details
+      friendships   = gt_friendships
+      typepusages   = gt_typepusages
+      clsdeferrds   = gt_clsdeferrds
+      intdeferrds   = gt_intdeferrds
+      aliases       = gt_aliases
+    EXCEPTIONS
+      not_existing  = 1
+      is_interface  = 2
+      model_only    = 3
+      OTHERS        = 4.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  CALL FUNCTION 'SEO_CLASS_GET_METHOD_INCLUDES'
+    EXPORTING
+      clskey                     = class
+    IMPORTING
+      includes                   = gs_includes
+    EXCEPTIONS
+      internalclass_not_existing = 1
+      OTHERS                     = 2.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  LOOP AT gt_types ASSIGNING <type>.
+
+    typkey-clsname = <type>-clsname.
+    typkey-cmpname = <type>-cmpname.
+
+    REFRESH single_source.
+
+    PERFORM get_type_source USING    typkey
+                            CHANGING single_source.
+
+***    CALL FUNCTION 'SEO_CLASS_GET_TYPE_SOURCE'
+***      EXPORTING
+***        typkey                     = typkey
+***      IMPORTING
+***        source                     = single_source
+***      EXCEPTIONS
+***        internalclass_not_existing = 1
+***        not_existing               = 2
+***        not_edited                 = 3
+***        OTHERS                     = 4.
+
+    CHECK NOT single_source[] IS INITIAL.
+
+    <type>-srcrow1 = lines( type_source ) + 1.
+    <type>-srccolumn1 = 0.
+
+    LOOP AT single_source ASSIGNING <source_line>.
+      CONDENSE <source_line>.
+      <type>-srccolumn2 = strlen( <source_line> ).
+      APPEND <source_line> TO type_source.
+    ENDLOOP.
+
+    <type>-srcrow2 = lines( type_source ).
+
+  ENDLOOP.
+
+END-OF-SELECTION.
+
+  DATA:
+  mtd_name TYPE string,
+  class_root TYPE REF TO if_ixml_node,
+  section TYPE REF TO if_ixml_node,
+  l_description TYPE sdok_descr.
+  l_description = gs_class-descript.
+
+  CREATE OBJECT g_xml
+    EXPORTING
+      description = l_description
+      object_type = cl_xml_document=>c_bor_classtype
+      object_name = gs_class-clsname.
+
+  g_xml->set_data( name = c_xml_root
+  dataobject = gs_class ).
+
+  class_root = g_xml->find_node( name = c_xml_root ).
+
+  g_xml->set_data( name = c_xml_attributes
+  parent_node = class_root
+  dataobject = gt_attributes ).
+
+  g_xml->set_data( name = c_xml_methods
+  parent_node = class_root
+  dataobject = gt_methods ).
+
+  g_xml->set_data( name = c_xml_events
+  parent_node = class_root
+  dataobject = gt_events ).
+
+  g_xml->set_data( name = c_xml_types
+  parent_node = class_root
+  dataobject = gt_types ).
+
+  g_xml->set_data( name = c_xml_parameters
+  parent_node = class_root
+  dataobject = gt_parameters ).
+
+  g_xml->set_data( name = c_xml_exceps
+  parent_node = class_root
+  dataobject = gt_exceps ).
+
+  g_xml->set_data( name = c_xml_implementings
+  parent_node = class_root
+  dataobject = gt_implementings ).
+
+  g_xml->set_data( name = c_xml_impl_details
+  parent_node = class_root
+  dataobject = gt_impl_details ).
+
+  g_xml->set_data( name = c_xml_friendships
+  parent_node = class_root
+  dataobject = gt_friendships ).
+
+  g_xml->set_data( name = c_xml_typepusages
+  parent_node = class_root
+  dataobject = gt_typepusages ).
+
+  g_xml->set_data( name = c_xml_clsdeferrds
+  parent_node = class_root
+  dataobject = gt_clsdeferrds ).
+
+  g_xml->set_data( name = c_xml_intdeferrds
+  parent_node = class_root
+  dataobject = gt_intdeferrds ).
+
+  g_xml->set_data( name = c_xml_aliases
+  parent_node = class_root
+  dataobject = gt_aliases ).
+
+  g_xml->set_data( name = c_xml_inheritance
+  parent_node = class_root
+  dataobject = gs_inheritance ).
+
+  g_xml->set_data( name = c_xml_interfaces
+  parent_node = class_root
+  dataobject = gt_interfaces ).
+
+  g_xml->set_data( name = c_xml_redefinitions
+  parent_node = class_root
+  dataobject = gt_redefinitions ).
+
+  g_xml->set_data( name = c_xml_typesource
+  parent_node = class_root
+  dataobject = type_source ).
+
+  DEFINE set_locals.
+
+    refresh gt_source.
+
+    call function 'SEO_CLASS_GET_INCLUDE_SOURCE'
+      exporting
+        clskey                     = class
+        inctype                    = &1
+      importing
+        source_expanded            = gt_source
+      exceptions
+        internalclass_not_existing = 0
+        not_existing               = 0
+        others                     = 0.
+
+    g_xml->set_data( name = &2
+    parent_node = class_root
+    dataobject = gt_source ).
+
+  END-OF-DEFINITION.
+
+  DATA:
+
+  include_name TYPE programm.
+
+  CALL FUNCTION 'SEO_CLASS_GET_INCLUDE_BY_NAME'
+    EXPORTING
+      clskey   = class
+      limu     = seok_limu_locals
+    IMPORTING
+      progname = include_name.
+
+  set_locals:
+  include_name c_xml_locals_src,
+  seop_ext_class_locals_def c_xml_locals_def,
+  seop_ext_class_locals_imp c_xml_locals_imp,
+  seop_ext_class_macros c_xml_locals_mac.
+
+  DATA:
+  gt_texts TYPE TABLE OF textpool.
+
+  CALL FUNCTION 'SEO_CLASS_GET_INCLUDE_BY_NAME'
+    EXPORTING
+      clskey   = class
+    IMPORTING
+      progname = include_name.
+
+  READ TEXTPOOL include_name INTO gt_texts LANGUAGE sy-langu.
+
+  g_xml->set_data( name = c_xml_text_pool
+  parent_node = class_root
+  dataobject = gt_texts ).
+
+  section = g_xml->create_simple_element( name = c_xml_method_src
+  parent = class_root ).
+
+  LOOP AT gs_includes ASSIGNING <include>.
+
+    REFRESH gt_source.
+
+    CALL FUNCTION 'SEO_METHOD_GET_SOURCE'
+      EXPORTING
+        mtdkey                      = <include>-cpdkey
+        state                       = 'A'
+      IMPORTING
+        source_expanded             = gt_source
+      EXCEPTIONS
+        internalmethod_not_existing = 1
+        internalclass_not_existing  = 2
+        version_not_existing        = 3
+        inactive_new                = 4
+        inactive_deleted            = 5
+        OTHERS                      = 6.
+
+    CHECK sy-subrc = 0.
+
+    mtd_name = <include>-cpdkey-cpdname.
+    g_xml->set_data( name = mtd_name
+    parent_node = section
+    dataobject = gt_source[] ).
+
+  ENDLOOP.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  mtd_name = class.
+
+  IF p_show = 'X'.
+    g_xml->display( ).
+    EXIT.
+  ENDIF.
+
+  DATA:
+  user_action TYPE i,
+  path TYPE string,
+  full_path TYPE string,
+  file_name TYPE string.
+
+  CALL METHOD cl_gui_frontend_services=>file_save_dialog
+    EXPORTING
+      default_extension    = 'xml'
+      default_file_name    = mtd_name
+      file_filter          = cl_gui_frontend_services=>filetype_xml
+    CHANGING
+      filename             = file_name
+      path                 = path
+      fullpath             = full_path
+      user_action          = user_action
+    EXCEPTIONS
+      cntl_error           = 1
+      error_no_gui         = 2
+      not_supported_by_gui = 3
+      OTHERS               = 4.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  CHECK user_action = cl_gui_frontend_services=>action_ok.
+
+  DATA:
+  localfile TYPE localfile.
+
+  localfile = full_path.
+  g_xml->export_to_file( filename = localfile ).
+
+
+*&---------------------------------------------------------------------*
+*&      Form  get_type_source
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->VALUE      text
+*      -->(P_TYPKEY) text
+*      -->P_SOURCE   text
+*----------------------------------------------------------------------*
+FORM get_type_source USING value(p_typkey) TYPE seocmpkey
+                     CHANGING    p_source  TYPE seop_source.
+
+  STATICS:
+  loaded,
+  private_section TYPE seop_source,
+  protected_section TYPE seop_source.
+
+  DATA:
+  filename TYPE progstruc,
+  expanded_srouce TYPE seop_source_string,
+  type TYPE vseotype.
+
+  FIELD-SYMBOLS:
+  <dest> TYPE seop_source.
+
+  IF loaded IS INITIAL.
+
+    class_include p_typkey srext_ext_class_protected filename.
+    READ REPORT filename INTO expanded_srouce.
+    protected_section[] = expanded_srouce[].
+    class_include p_typkey srext_ext_class_private filename.
+    READ REPORT filename INTO expanded_srouce.
+    private_section[] = expanded_srouce[].
+    loaded = 'X'.
+
+  ENDIF.
+
+  CALL FUNCTION 'SEO_TYPE_GET'
+    EXPORTING
+      typkey  = typkey
+      version = seoc_version_inactive
+    IMPORTING
+      type    = type
+    EXCEPTIONS
+      OTHERS  = 0.
+
+  IF type-exposure = seoc_exposure_protected.
+    ASSIGN protected_section TO <dest>.
+  ELSE.
+    ASSIGN private_section TO <dest>.
+  ENDIF.
+
+  PERFORM extract_type_source(saplseop)
+          USING    <dest> type-srcrow1 type-srccolumn1
+                   type-srcrow2 type-srccolumn2
+          CHANGING p_source.
+
+ENDFORM.                    "rename_class
