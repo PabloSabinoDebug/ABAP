@@ -1,0 +1,107 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2870
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww20480\viewh13980\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 FUNCTION zvim_fm_close_pending_wi.\
+*"----------------------------------------------------------------------\
+*"*"Local Interface:\
+*"  IMPORTING\
+*"     REFERENCE(OK_CODE) TYPE  CHAR20\
+*"     REFERENCE(INVOICE_HEADER) TYPE  /ORS/INVOICE_HDR\
+*"     REFERENCE(WORKITEM_ID) TYPE  SWW_WIID\
+*"  TABLES\
+*"      RETURN STRUCTURE  BAPIRET2\
+*"----------------------------------------------------------------------\
+\
+  DATA: ls_start_wi   TYPE swwwihead,\
+        lt_ready_wi   TYPE STANDARD TABLE OF swwwihead,\
+        ls_path_level TYPE /ors/path_level,\
+        ls_level      TYPE /ors/path_level,\
+        lv_return     LIKE sy-subrc\
+        .\
+\
+  CASE ok_code.\
+    WHEN 'APPROVE'.\
+\
+      "1. Leggo il workitem di partenza\
+      SELECT SINGLE * FROM swwwihead INTO @ls_start_wi\
+        WHERE wi_id = @workitem_id.\
+\
+      IF sy-subrc <> 0.\
+        RETURN.\
+      ENDIF.\
+\
+      "2. Cerco tutti i workitem READY nello stesso workflow top-level\
+      "   e con lo stesso task del workitem iniziale\
+      SELECT * FROM swwwihead INTO TABLE @lt_ready_wi\
+        WHERE top_wi_id  = @ls_start_wi-top_wi_id\
+          AND ( wi_stat    = 'READY' OR\
+                wi_stat    = 'RESERVED' OR\
+                wi_stat    = 'SELECTED' OR\
+                wi_stat    = 'STARTED' )\
+          AND wi_rh_task = @ls_start_wi-wi_rh_task.\
+\
+      DELETE lt_ready_wi WHERE wi_id EQ ls_start_wi-wi_id.\
+      CHECK lt_ready_wi[] IS NOT INITIAL.\
+\
+      "Reading the container to extract level and path\
+      PERFORM get_pathlevel    USING ls_start_wi-wi_id\
+                            CHANGING ls_path_level.\
+\
+      CHECK ls_path_level IS NOT INITIAL.\
+      "If path level is known we could delete all the WI that belongs to the same line\
+      SELECT * FROM zvim_npo_ap_map INTO TABLE @DATA(lt_ap_map)\
+        WHERE docid EQ @invoice_header-dp_docid.\
+      "Get Path Level of main WI\
+      READ TABLE lt_ap_map INTO DATA(ls_appr)\
+        WITH KEY appr_level = ls_path_level-appr_level\
+                 appr_path  = ls_path_level-appr_path.\
+      CHECK ls_appr IS NOT INITIAL.\
+      LOOP AT lt_ready_wi INTO DATA(ls_ready_wi).\
+        "Get path level of current WI\
+        PERFORM get_pathlevel    USING ls_ready_wi-wi_id\
+                              CHANGING ls_level.\
+        "Check if the WI belongs to the same line of approved WI\
+        READ TABLE lt_ap_map INTO DATA(ls_pending)\
+          WITH KEY appr_level = ls_level-appr_level\
+                   appr_path  = ls_level-appr_path.\
+        IF ls_pending-itemid EQ ls_appr-itemid.\
+          "Delete WI\
+          PERFORM delete_wi    USING ls_ready_wi-wi_id\
+                            CHANGING lv_return.\
+\
+        ENDIF.\
+\
+      ENDLOOP.\
+\
+      "Modify Info about this level in Map Table\
+      UPDATE zvim_npo_ap_map SET approved = 'X' WHERE docid EQ invoice_header-dp_docid\
+                                                  AND itemid EQ ls_appr-itemid\
+                                                  AND appr_level EQ ls_appr-appr_level.\
+\
+    WHEN 'REJECT'.\
+      SELECT SINGLE * FROM swwwihead INTO @ls_start_wi\
+        WHERE wi_id = @workitem_id.\
+      IF sy-subrc <> 0.\
+        RETURN.\
+      ENDIF.\
+\
+      "Reading the container to extract level and path\
+      PERFORM get_pathlevel    USING ls_start_wi-wi_id\
+                            CHANGING ls_path_level.\
+      CHECK ls_path_level IS NOT INITIAL.\
+\
+      "Delete all Infos about current approval level\
+      DELETE FROM zvim_npo_ap_map WHERE docid EQ invoice_header-dp_docid\
+                                    AND appr_level EQ ls_path_level-appr_level.\
+      "Activate again the previous level of approval\
+      SUBTRACT 1 FROM ls_path_level-appr_level.\
+      UPDATE zvim_npo_ap_map SET approved = ' ' WHERE docid EQ invoice_header-dp_docid\
+                                                  AND appr_level EQ ls_path_level-appr_level.\
+\
+  ENDCASE.\
+\
+ENDFUNCTION.}
